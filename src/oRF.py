@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 import pandas as pd
 from scipy.stats import entropy
@@ -13,7 +15,8 @@ class Node():
                  bias=None,       # viés (intercept) do split
                  left=None,
                  right=None,
-                 label=None):
+                 label=None,
+                 certainty=None):
 
         # para nó de decisão (oblíquo via SVM)
         self.weights = weights
@@ -23,6 +26,7 @@ class Node():
 
         # y_hat para nós folha
         self.label = label
+        self.certainty = certainty
 
 
 class ObliqueSVMDecisionTreeClassifier():
@@ -46,17 +50,17 @@ class ObliqueSVMDecisionTreeClassifier():
     def build_tree(self, X, Y, depth=0):
 
         if len(np.unique(Y)) == 1:
-            return Node(label=Y[0])
+            return Node(label=Y[0], certainty=1.0)
 
         # Para em depth máximo ou número mínimo de amostras (evitar overfitting)
         if depth >= self.max_depth or len(Y) < self.min_samples_split:
-            return Node(label=self.calculate_leaf_label(Y))
+            return Node(label=self.calculate_leaf_label(Y), certainty=self.calculate_certainty(Y))
 
         weights, bias, best_gain = self.get_best_split(X, Y)
 
         # se não ganhou informação suficiente, cria nó folha
         if weights is None or best_gain < self.min_info_gain:
-            return Node(label=self.calculate_leaf_label(Y))
+            return Node(label=self.calculate_leaf_label(Y), certainty=self.calculate_certainty(Y))
 
         projection = X @ weights + bias
         left_mask = projection <= 0
@@ -67,7 +71,7 @@ class ObliqueSVMDecisionTreeClassifier():
 
         # Se for um nó puro, cria nó folha
         if len(Yi_left) == 0 or len(Yi_right) == 0:
-            return Node(label=self.calculate_leaf_label(Y))
+            return Node(label=self.calculate_leaf_label(Y), certainty=self.calculate_certainty(Y))
 
         left_subtree = self.build_tree(Xi_left, Yi_left, depth + 1)
         right_subtree = self.build_tree(Xi_right, Yi_right, depth + 1)
@@ -83,7 +87,7 @@ class ObliqueSVMDecisionTreeClassifier():
 
         classes = list(classes)
         groupings = []
-        # tamanho do grupo A vai de 1 até metade das classes (evita duplicar complementos)
+        # tamanho do grupo A vai de 1 até metade das classes (p/ evitar duplicar complementos)
         for size in range(1, len(classes) // 2 + 1):
             for combo in combinations(classes, size):
                 # evita duplicar quando size == len(classes)/2 (A|B e B|A seriam iguais)
@@ -153,6 +157,10 @@ class ObliqueSVMDecisionTreeClassifier():
     def calculate_leaf_label(self, Y):
         values, counts = np.unique(Y, return_counts=True)
         return values[np.argmax(counts)]
+    
+    def calculate_certainty(self, Y):
+        values, counts = np.unique(Y, return_counts=True)
+        return np.max(counts) / len(Y)
 
     # ---------------------------------------------------------
     # treino e predição
@@ -165,7 +173,7 @@ class ObliqueSVMDecisionTreeClassifier():
 
     def make_prediction(self, x, tree):
         if tree.label is not None:  # folha
-            return tree.label
+            return tree.label, tree.certainty
 
         projection = np.dot(x, tree.weights) + tree.bias
         if projection <= 0:
@@ -242,28 +250,38 @@ class ObliqueSVMRandomForestClassifier():
     def predict(self, X):
         n = X.shape[0]
 
-        all_preds = []
+        all_labels = []
+        all_certainties = []
+
         for tree, feat_idx in self.trees:
             X_sub = X[:, feat_idx]
             preds = tree.predict(X_sub)
-            all_preds.append(preds)
+            labels = [p[0] for p in preds]
+            certainties = [p[1] for p in preds]
+            all_labels.append(labels)
+            all_certainties.append(certainties)
 
-        all_preds = np.array(all_preds)  # shape: (n_estimators, n_amostras)
+        all_labels = np.array(all_labels)
+        all_certainties = np.array(all_certainties)
 
-        # votação majoritária, amostra por amostra
+        # votação ponderada pela certeza da folha, amostra por amostra
         final_preds = []
         for j in range(n):
-            votes = all_preds[:, j]
-            values, counts = np.unique(votes, return_counts=True)
-            final_preds.append(values[np.argmax(counts)])
+            votes = all_labels[:, j]
+            weights = all_certainties[:, j]
 
-        return final_preds
-    
+            classes = np.unique(votes)
+            scores = {c: weights[votes == c].sum() for c in classes}
+
+            final_preds.append(max(scores, key=scores.get))
+
+        return final_preds 
 
 # -----------------------------USO-----------------------------------------
 def main():
     print("Carregando dados...")
-    data = np.load("data/data.npz")
+    path_data = os.path.join(os.path.dirname(__file__), "data/data.npz")
+    data = np.load(path_data)
     X_train = data["X_train"]
     y_train = data["y_train"]
     print("X_train carregado de forma: ", X_train.shape)
@@ -274,5 +292,11 @@ def main():
     model = ObliqueSVMRandomForestClassifier()
     model.fit(X_train, y_train)
     y_hat = model.predict(X_test)
+    submission_df = pd.DataFrame({
+    'ID': np.arange(1, len(y_hat) + 1),
+    'Prediction': y_hat
+    })
+    submission_df.to_csv("submission.csv", index=False)
+    print("Arquivo de submissão salvo em submission.csv")
 
 main()
