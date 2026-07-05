@@ -1,0 +1,278 @@
+import numpy as np
+import pandas as pd
+from scipy.stats import entropy
+from sklearn.svm import LinearSVC
+from itertools import combinations
+import warnings
+
+# -----------------------------DECISION TREE-----------------------------------------
+
+class Node():
+    def __init__(self,
+                 weights=None,    # vetor de pesos (tamanho = n_atributos)
+                 bias=None,       # viés (intercept) do split
+                 left=None,
+                 right=None,
+                 label=None):
+
+        # para nó de decisão (oblíquo via SVM)
+        self.weights = weights
+        self.bias = bias
+        self.left = left
+        self.right = right
+
+        # y_hat para nós folha
+        self.label = label
+
+
+class ObliqueSVMDecisionTreeClassifier():
+    def __init__(self,
+                 max_depth=14,
+                 min_samples_split=35,
+                 min_info_gain=1e-7,
+                 svm_C=1.0,
+                 svm_max_iter=2000,
+                 random_state=None):
+
+        self.root = None
+        self.max_depth = max_depth
+        self.min_samples_split = min_samples_split
+        self.min_info_gain = min_info_gain
+        self.svm_C = svm_C
+        self.svm_max_iter = svm_max_iter
+        self.rng = np.random.RandomState(random_state)
+
+
+    def build_tree(self, X, Y, depth=0):
+
+        if len(np.unique(Y)) == 1:
+            return Node(label=Y[0])
+
+        # Para em depth máximo ou número mínimo de amostras (evitar overfitting)
+        if depth >= self.max_depth or len(Y) < self.min_samples_split:
+            return Node(label=self.calculate_leaf_label(Y))
+
+        weights, bias, best_gain = self.get_best_split(X, Y)
+
+        # se não ganhou informação suficiente, cria nó folha
+        if weights is None or best_gain < self.min_info_gain:
+            return Node(label=self.calculate_leaf_label(Y))
+
+        projection = X @ weights + bias
+        left_mask = projection <= 0
+        right_mask = projection > 0
+
+        Xi_left, Yi_left = X[left_mask], Y[left_mask]
+        Xi_right, Yi_right = X[right_mask], Y[right_mask]
+
+        # Se for um nó puro, cria nó folha
+        if len(Yi_left) == 0 or len(Yi_right) == 0:
+            return Node(label=self.calculate_leaf_label(Y))
+
+        left_subtree = self.build_tree(Xi_left, Yi_left, depth + 1)
+        right_subtree = self.build_tree(Xi_right, Yi_right, depth + 1)
+
+        return Node(weights=weights, bias=bias, left=left_subtree, right=right_subtree)
+
+
+    # busca do melhor split oblíquo usando SVM 
+    def get_all_class_groupings(self, classes):
+        """Gera todos os agrupamentos possíveis das classes em 2 grupos não-vazios,
+        sem repetir. Como o SVM é binário, a gente tem que dividir as classes em 
+        dois grupos pra tereinar"""
+
+        classes = list(classes)
+        groupings = []
+        # tamanho do grupo A vai de 1 até metade das classes (evita duplicar complementos)
+        for size in range(1, len(classes) // 2 + 1):
+            for combo in combinations(classes, size):
+                # evita duplicar quando size == len(classes)/2 (A|B e B|A seriam iguais)
+                if size == len(classes) - size and combo[0] != classes[0]:
+                    continue
+                groupings.append(set(combo))
+        return groupings
+
+    def get_best_split(self, X, Y):
+        parent_entropy = self.entropy_calc(Y)
+        classes = np.unique(Y)
+
+        best_gain = -float("inf")
+        best_weights = None
+        best_bias = None
+
+        groupings = self.get_all_class_groupings(classes)
+
+        for group_a in groupings:
+
+            y_binary = np.array([0 if c in group_a else 1 for c in Y])
+
+            if len(np.unique(y_binary)) < 2:
+                print("Agrupamento degenerado, pulando...")
+                continue  # agrupamento degenerado, pula
+
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")  # ignora warnings de não-convergência
+                    svm = LinearSVC(C=self.svm_C, max_iter=self.svm_max_iter, dual="auto")
+                    svm.fit(X, y_binary)
+            except Exception:
+                continue  # se a SVM falhar por algum motivo, ignora essa tentativa
+
+            weights = svm.coef_[0]
+            bias = svm.intercept_[0]
+
+            projection = X @ weights + bias
+            left_mask = projection <= 0
+            right_mask = projection > 0
+            Yi_left = Y[left_mask]
+            Yi_right = Y[right_mask]
+
+            if len(Yi_left) > 0 and len(Yi_right) > 0:
+                curr_gain = self.information_gain(parent_entropy, Yi_left, Yi_right)
+
+                if curr_gain > best_gain:
+                    best_gain = curr_gain
+                    best_weights = weights
+                    best_bias = bias
+
+        return best_weights, best_bias, best_gain
+
+    # ---------------------------------------------------------
+    # entropia / ganho de informação
+    # ---------------------------------------------------------
+    def entropy_calc(self, y):
+        values, counts = np.unique(y, return_counts=True)
+        p = counts / counts.sum()
+        return entropy(p, base=2)
+
+    def information_gain(self, parent_entropy, l_child, r_child):
+        n_left, n_right = len(l_child), len(r_child)
+        ita = n_left / (n_left + n_right)
+        return parent_entropy - ita * self.entropy_calc(l_child) - (1 - ita) * self.entropy_calc(r_child)
+
+    def calculate_leaf_label(self, Y):
+        values, counts = np.unique(Y, return_counts=True)
+        return values[np.argmax(counts)]
+
+    # ---------------------------------------------------------
+    # treino e predição
+    # ---------------------------------------------------------
+    def fit(self, X, Y):
+        self.root = self.build_tree(X, Y)
+
+    def predict(self, X):
+        return [self.make_prediction(x, self.root) for x in X]
+
+    def make_prediction(self, x, tree):
+        if tree.label is not None:  # folha
+            return tree.label
+
+        projection = np.dot(x, tree.weights) + tree.bias
+        if projection <= 0:
+            return self.make_prediction(x, tree.left)
+        else:
+            return self.make_prediction(x, tree.right)
+        
+
+# -----------------------------RANDOM FOREST-----------------------------------------
+
+class ObliqueSVMRandomForestClassifier():
+    def __init__(self,
+                 n_estimators=50,
+                 max_depth=14,
+                 min_samples_split=35,
+                 min_info_gain=1e-7,
+                 svm_C=1.0,
+                 svm_max_iter=2000,
+                 max_features=20,
+                 bootstrap=True,
+                 random_state=None):
+
+        self.n_estimators = n_estimators
+        self.max_depth = max_depth
+        self.min_samples_split = min_samples_split
+        self.min_info_gain = min_info_gain
+        self.svm_C = svm_C #penalty error
+        self.svm_max_iter = svm_max_iter
+        self.max_features = max_features
+        self.bootstrap = bootstrap # reposição de linhas (True) ou não (False)
+        self.rng = np.random.RandomState(random_state)
+
+        self.trees = []
+
+    def fit(self, X, Y):
+        n, m = X.shape
+        self.trees = []
+
+        for i in range(self.n_estimators):
+            # montando cada estimador:
+            if self.bootstrap:
+                row_idx = self.rng.choice(n, size=n, replace=True)
+            else:
+                row_idx = np.arange(n)
+
+            X_boot = X[row_idx]
+            Y_boot = Y[row_idx]
+
+            # --- subamostragem de atributos (colunas) ---
+            if self.max_features is not None:
+                k = min(self.max_features, m)
+                feat_idx = self.rng.choice(m, size=k, replace=False)
+            else:
+                feat_idx = np.arange(m)
+
+            X_boot_sub = X_boot[:, feat_idx]
+
+            tree_seed = self.rng.randint(0, 2**31 - 1)
+
+            tree = ObliqueSVMDecisionTreeClassifier(
+                max_depth=self.max_depth,
+                min_samples_split=self.min_samples_split,
+                min_info_gain=self.min_info_gain,
+                svm_C=self.svm_C,
+                svm_max_iter=self.svm_max_iter,
+                random_state=tree_seed
+            )
+            tree.fit(X_boot_sub, Y_boot)
+
+            self.trees.append((tree, feat_idx))
+
+        return self
+
+    def predict(self, X):
+        n = X.shape[0]
+
+        all_preds = []
+        for tree, feat_idx in self.trees:
+            X_sub = X[:, feat_idx]
+            preds = tree.predict(X_sub)
+            all_preds.append(preds)
+
+        all_preds = np.array(all_preds)  # shape: (n_estimators, n_amostras)
+
+        # votação majoritária, amostra por amostra
+        final_preds = []
+        for j in range(n):
+            votes = all_preds[:, j]
+            values, counts = np.unique(votes, return_counts=True)
+            final_preds.append(values[np.argmax(counts)])
+
+        return final_preds
+    
+
+# -----------------------------USO-----------------------------------------
+def main():
+    print("Carregando dados...")
+    data = np.load("data/data.npz")
+    X_train = data["X_train"]
+    y_train = data["y_train"]
+    print("X_train carregado de forma: ", X_train.shape)
+    print("y_train carregado de forma: ", y_train.shape)
+
+    X_test = data['X_test']
+
+    model = ObliqueSVMRandomForestClassifier()
+    model.fit(X_train, y_train)
+    y_hat = model.predict(X_test)
+
+main()
