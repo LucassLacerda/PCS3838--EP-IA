@@ -167,7 +167,7 @@ class RandomForestClassifier():
         print(f"min_info_gain: {self.min_info_gain}")
         print(f"svm_max_iter: {self.svm_max_iter}")
         print(f"max_features: {self.max_features}")
-        
+
     def fit(self, X, Y):
         n, m = X.shape
         self.trees = []
@@ -281,6 +281,7 @@ def teste():
     X_tr, y_tr, X_val, y_val = train_val_split(X_train, y_train, val_ratio=0.2, seed=42)
 
     print(f"Treino: {X_tr.shape[0]} amostras | Validação: {X_val.shape[0]} amostras")
+
     forest = RandomForestClassifier(
         n_estimators=50,
         max_depth=14,

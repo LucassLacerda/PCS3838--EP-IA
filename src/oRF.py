@@ -6,6 +6,7 @@ from scipy.stats import entropy
 from sklearn.svm import LinearSVC
 from itertools import combinations
 import warnings
+import time
 
 # -----------------------------DECISION TREE-----------------------------------------
 
@@ -340,20 +341,31 @@ def teste():
     X_tr, y_tr, X_val, y_val = train_val_split(X_train, y_train, val_ratio=0.2, seed=42)
 
     print(f"Treino: {X_tr.shape[0]} amostras | Validação: {X_val.shape[0]} amostras")
-    forest = ObliqueSVMRandomForestClassifier(
-        n_estimators=50,
-        max_depth=14,
-        min_samples_split=35,
-        svm_C=1.0,
-        random_state=42,
-        max_features=23,
-        flag_certainty=True
-    )
-    forest.print_info()
-    forest.fit(X_tr, y_tr) 
+    list_hyperparametro = [10, 30, 50, 70, 100]
+    accuracys = []
+    tempos = []
+    for n in list_hyperparametro:
+        inicio = time.perf_counter()
+        forest = ObliqueSVMRandomForestClassifier(
+            n_estimators=n,
+            max_depth=14,
+            min_samples_split=35,
+            svm_C=1.0,
+            random_state=42,
+            max_features=23,
+            flag_certainty=False
+        )
+        forest.print_info()
+        forest.fit(X_tr, y_tr) 
 
-    y_val_pred = forest.predict(X_val)
-    print("Acurácia validação (floresta):", accuracy(y_val, y_val_pred))
+        y_val_pred = forest.predict(X_val)
+        fim = time.perf_counter()
+        print(f"Tempo de execução para {n} estimadores: {fim - inicio:.2f} segundos")
+        print("Acurácia validação (floresta):", accuracy(y_val, y_val_pred))
+        accuracys.append(accuracy(y_val, y_val_pred))
+        tempos.append(fim - inicio)
+    print("Acurácias para diferentes números de estimadores:", accuracys)
+    print("Tempos de execução para diferentes números de estimadores:", tempos)
 
 # main()
 teste()
