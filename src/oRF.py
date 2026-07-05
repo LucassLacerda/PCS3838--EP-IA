@@ -194,7 +194,8 @@ class ObliqueSVMRandomForestClassifier():
                  svm_max_iter=2000,
                  max_features=20,
                  bootstrap=True,
-                 random_state=None):
+                 random_state=None,
+                 flag_certainty=False):
 
         self.n_estimators = n_estimators
         self.max_depth = max_depth
@@ -203,11 +204,12 @@ class ObliqueSVMRandomForestClassifier():
         self.svm_C = svm_C #penalty error
         self.svm_max_iter = svm_max_iter
         self.max_features = max_features
+        self.flag_certainty = flag_certainty
         self.bootstrap = bootstrap # reposição de linhas (True) ou não (False)
         self.rng = np.random.RandomState(random_state)
 
         self.trees = []
-
+    
     def fit(self, X, Y):
         n, m = X.shape
         self.trees = []
@@ -264,18 +266,33 @@ class ObliqueSVMRandomForestClassifier():
         all_labels = np.array(all_labels)
         all_certainties = np.array(all_certainties)
 
-        # votação ponderada pela certeza da folha, amostra por amostra
+        # votação ponderada pela certeza da folha (ou majoritária simples, se flag desativada)
         final_preds = []
         for j in range(n):
             votes = all_labels[:, j]
-            weights = all_certainties[:, j]
 
-            classes = np.unique(votes)
-            scores = {c: weights[votes == c].sum() for c in classes}
+            if self.flag_certainty:
+                weights = all_certainties[:, j]
+                classes = np.unique(votes)
+                scores = {c: weights[votes == c].sum() for c in classes}   # soma certeza por classe
+                final_preds.append(max(scores, key=scores.get))
+            else:
+                values, counts = np.unique(votes, return_counts=True)      # conta votos por classe
+                final_preds.append(values[np.argmax(counts)])
 
-            final_preds.append(max(scores, key=scores.get))
-
-        return final_preds 
+        return final_preds
+    
+    def print_info(self):
+        print("Random Forest com SVM oblíquo")
+        print(f"n_estimators: {self.n_estimators}")
+        print(f"max_depth: {self.max_depth}")
+        print(f"min_samples_split: {self.min_samples_split}")
+        print(f"min_info_gain: {self.min_info_gain}")
+        print(f"svm_C: {self.svm_C}")
+        print(f"svm_max_iter: {self.svm_max_iter}")
+        print(f"max_features: {self.max_features}")
+        print(f"flag_certainty: {self.flag_certainty}")
+            
 
 # -----------------------------USO-----------------------------------------
 def main():
@@ -299,4 +316,44 @@ def main():
     submission_df.to_csv("submission.csv", index=False)
     print("Arquivo de submissão salvo em submission.csv")
 
-main()
+# -----------------------------TESTANDO FORA DO KAGGLE-----------------------------------------
+def train_val_split(X, Y, val_ratio=0.2, seed=42):
+    rng = np.random.RandomState(seed)
+    n = X.shape[0]
+    indices = rng.permutation(n)
+    n_val = int(n * val_ratio)
+    val_idx = indices[:n_val]
+    train_idx = indices[n_val:]
+    return X[train_idx], Y[train_idx], X[val_idx], Y[val_idx]
+
+def accuracy(y_true, y_pred):
+    y_pred = np.array(y_pred)
+    return np.mean(y_true == y_pred)
+
+def teste():
+    # --- Carrega os dados ---
+    path_data = os.path.join(os.path.dirname(__file__), "data/data.npz")
+    data = np.load(path_data)
+    X_train = data["X_train"]
+    y_train = data["y_train"]
+
+    X_tr, y_tr, X_val, y_val = train_val_split(X_train, y_train, val_ratio=0.2, seed=42)
+
+    print(f"Treino: {X_tr.shape[0]} amostras | Validação: {X_val.shape[0]} amostras")
+    forest = ObliqueSVMRandomForestClassifier(
+        n_estimators=50,
+        max_depth=14,
+        min_samples_split=35,
+        svm_C=1.0,
+        random_state=42,
+        max_features=23,
+        flag_certainty=True
+    )
+    forest.print_info()
+    forest.fit(X_tr, y_tr) 
+
+    y_val_pred = forest.predict(X_val)
+    print("Acurácia validação (floresta):", accuracy(y_val, y_val_pred))
+
+# main()
+teste()
