@@ -341,18 +341,18 @@ def teste():
     X_tr, y_tr, X_val, y_val = train_val_split(X_train, y_train, val_ratio=0.2, seed=42)
 
     print(f"Treino: {X_tr.shape[0]} amostras | Validação: {X_val.shape[0]} amostras")
-    list_hyperparametro = [10, 30, 50, 70, 100]
+    list_hyperparametro = [20, 25, 35, 40, 45]
     accuracys = []
     tempos = []
     for n in list_hyperparametro:
         inicio = time.perf_counter()
         forest = ObliqueSVMRandomForestClassifier(
-            n_estimators=n,
-            max_depth=14,
-            min_samples_split=35,
+            n_estimators=70,
+            max_depth=16,
+            min_samples_split=n,
             svm_C=1.0,
             random_state=42,
-            max_features=23,
+            max_features=20,
             flag_certainty=False
         )
         forest.print_info()

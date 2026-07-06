@@ -26,14 +26,27 @@ class Node():
         self.label = label
 
 class DecisionTreeClassifier():
-    def __init__(self):
+    def __init__(self,
+                 max_depth=14,
+                 min_samples_split=35,
+                 min_info_gain=1e-7,
+                 random_state=None):
+
         self.root = None
+        self.max_depth = max_depth
+        self.min_samples_split = min_samples_split
+        self.min_info_gain = min_info_gain
+        self.rng = np.random.RandomState(random_state)
         
-    def build_tree(self, X, Y):
+    def build_tree(self, X, Y, depth=0):
 
         if len(np.unique(Y)) == 1:
             return Node(label=Y[0])
+        if depth >= self.max_depth:
+            return Node(label=self.calculate_leaf_label(Y))
 
+        if len(Y) < self.min_samples_split:
+            return Node(label=self.calculate_leaf_label(Y))
         n, m = X.shape
 
         feature_i_star, th_star = self.get_best_split(X, Y)
@@ -58,8 +71,8 @@ class DecisionTreeClassifier():
         if len(Xi_left) == 0 or len(Xi_right) == 0:
             return Node(label=self.calculate_leaf_label(Y))
 
-        left_subtree = self.build_tree(Xi_left, Yi_left)
-        right_subtree = self.build_tree(Xi_right, Yi_right)
+        left_subtree = self.build_tree(Xi_left, Yi_left, depth+1)
+        right_subtree = self.build_tree(Xi_right, Yi_right, depth+1)
         
         return Node(feature_i_star, th_star, 
                     left_subtree, right_subtree)
